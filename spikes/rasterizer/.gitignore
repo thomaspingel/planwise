@@ -1,0 +1,8 @@
+/doc/
+/libs/
+/.crystal/
+/.shards/
+/c_src/*.o
+/c_src/*.a
+/isochrone.png
+

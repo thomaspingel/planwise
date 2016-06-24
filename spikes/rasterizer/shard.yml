@@ -1,0 +1,11 @@
+name: rasterizer
+version: 0.1.0
+
+authors:
+  - Gustavo Giráldez <ggiraldez@manas.com.ar>
+
+license: MIT
+
+dependencies:
+  pg:
+    github: will/crystal-pg
