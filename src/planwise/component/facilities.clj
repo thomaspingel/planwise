@@ -5,7 +5,7 @@
             [clojure.java.jdbc :as jdbc]
             [hugsql.core :as hugsql]
             [taoensso.timbre :as timbre]
-            [clojure.string :refer [trim trim-newline join lower-case]]))
+            [clojure.string :refer [trim trim-newline join lower-case split-lines blank?]]))
 
 (timbre/refer-timbre)
 
@@ -101,17 +101,31 @@
         (vec))))
 
 (defn raster-isochrones! [service facility-id]
-  (let [scale-resolution 8
-        facilities-polygons-regions (select-facilities-polygons-regions-for-facility (get-db service) {:facility-id facility-id})]
-    (doseq [{:keys [facility-polygon-id region-id] :as fpr} facilities-polygons-regions]
+  (let [facilities-polygons-regions (select-facilities-polygons-regions-for-facility (get-db service) {:facility-id facility-id})
+        facilities-polygons-by-region (group-by :region-id facilities-polygons-regions)]
+
+    (doseq [[region-id facilities-polygons] facilities-polygons-by-region]
       (try
-        (let [population (-> (run-external (:runner service) :scripts 60000 "raster-isochrone" (str region-id) (str facility-polygon-id) (str scale-resolution))
-                             (trim-to-int))]
-          (set-facility-polygon-region-population!
-            (get-db service)
-            (assoc fpr :population population)))
+        (do
+          ; First generate the raster masks for each isochrone in the region
+          (doseq [{facility-polygon-id :facility-polygon-id} facilities-polygons]
+            (run-external (:runner service) :scripts 60000 "raster-isochrone" (str region-id) (str facility-polygon-id)))
+          ; Then count the population on each raster using the region raster as a basis, and update the DB
+          (let [response (apply run-external
+                           (:runner service) :bin 60000
+                           "aggregate-isochrones-population"
+                           ; TODO: Do not hardcode data paths
+                           (str "data/populations/data/" region-id ".tif")
+                           (mapv #(str "data/isochrones/" region-id "/" (:facility-polygon-id %) ".tif") facilities-polygons))
+                populations (->> response
+                              (split-lines)
+                              (filter (complement blank?))
+                              (map trim-to-int))
+                facilities-polygons-with-population (map #(assoc %1 :population %2) facilities-polygons populations)]
+            (doseq [fpr facilities-polygons-with-population]
+              (set-facility-polygon-region-population! (get-db service) fpr))))
         (catch Exception e
-          (error e "Error on raster-isochrone for facility" facility-id "polygon" facility-polygon-id "region" region-id)
+          (error e "Error on raster-isochrone for facility" facility-id "region" region-id)
           nil)))))
 
 (defn calculate-isochrones-population! [service facility-id country]

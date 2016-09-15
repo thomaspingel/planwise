@@ -2,6 +2,7 @@
 #include <string>
 #include <math.h>
 #include <stdio.h>
+#include <cassert>
 
 #include "gdal_priv.h"
 #include "cpl_conv.h"
@@ -43,6 +44,7 @@ int main(int argc, char *argv[]) {
 
   float* buffer = (float*) CPLMalloc(sizeof(float)*xBlockSize*yBlockSize);
   float nodata = band->GetNoDataValue();
+  // assert(nodata == 0.0);
   float max = 0;
   double sum = 0;
 
@@ -61,6 +63,7 @@ int main(int argc, char *argv[]) {
       for (int iY = 0; iY < nYValid; ++iY) {
         for (int iX = 0; iX < nXValid; ++iX) {
           int iBuff = xBlockSize*iY+iX;
+          // sum += buffer[iBuff];
           if (buffer[iBuff] != nodata) {
             sum += buffer[iBuff];
             if (buffer[iBuff] > max) {

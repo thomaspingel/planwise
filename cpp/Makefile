@@ -13,9 +13,12 @@ BOOST_VERSION=$(shell brew info --json=v1 boost | jq -r .[0].linked_keg)
 LIBS += -L/usr/local/Cellar/boost/$(BOOST_VERSION)/lib/ -lboost_timer
 endif
 
-all: aggregate-population calculate-demand
+all: aggregate-population aggregate-isochrones-population calculate-demand
 
 aggregate-population: aggregate-population.o
+	g++ $(LDFLAGS) -o $@ $+ $(LIBS)
+
+aggregate-isochrones-population: aggregate-isochrones-population.o
 	g++ $(LDFLAGS) -o $@ $+ $(LIBS)
 
 calculate-demand: calculate-demand.o
@@ -29,7 +32,7 @@ release: clean
 
 clean:
 	rm -f *.o
-	rm -f aggregate-population calculate-demand
+	rm -f aggregate-population aggregate-isochrones-population calculate-demand
 
 # debian:
 # 	docker build -t instedd/planwise-cpp-builder:local .
