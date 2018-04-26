@@ -46,22 +46,53 @@
   []
   [ui/fixed-width (merge {:tabs [project-tabs {:active 1}]} nav-params)
    [ui/panel {}
-    [m/Grid {}
-     [m/GridCell {:span 6}
-      [:form.vertical
-       [:h2 "Goal"]
-       [m/TextField {:label "Lorem"}]
-       [m/TextFieldHelperText {} "Enter the goal for this project"]
-       [m/TextField {:label "Ipsum"}]
-       [m/Checkbox {} "dolor sit amet"]
-       [m/Select {:label "Foo"
-                  :options ["bar" "baz" "qux"]}]]]
-     [m/GridCell {:span 6}
-      [ui/panel {}
-       [:pre {} "MAP"]]]
+    [m/Grid  {:class-name "wizard-steps"}
      [m/GridCell {:span 12}
-      [:div.form-actions
-       [m/Button {} "Continue"]]]]]])
+      [m/List {:class-name "inline-list"}
+        [m/SimpleListItem {:graphic "lens" :text "Goal" :meta "check_circle"}]
+        [m/SimpleListItem {:graphic "lens" :text "Demand" :meta "check_circle"}]
+        [m/SimpleListItem {:graphic "lens" :text "Sites" :meta "check_circle"}]
+        [m/SimpleListItem {:graphic "lens" :text "Coverage" :meta "check_circle"}]
+        [m/SimpleListItem {:graphic "lens" :text "Actions" :meta "check_circle"}]
+        [m/SimpleListItem {:graphic "lens" :text "Review" :meta "check_circle"}]
+      ]
+     ]
+    ]
+    [:form.vertical
+      [m/Grid {:class-name "no-padd no-vgap"}
+        [m/GridCell {:span 6}
+          [m/Grid {}
+            [m/GridCell {:span 12}
+              [:h2 "Goal"]
+            ]
+            [m/GridCell {:span 6}
+              [m/TextField {:label "Lorem" :fullwidth "true"}]
+            ]
+            [m/GridCell {:span 6}
+              [m/Select {:label "Foo" :options ["bar" "baz" "qux"] :class-name "full-width"}]
+            ]
+            [m/GridCell {:span 6}
+              [m/Select {:label "Foo" :options ["bar" "baz" "qux"] :class-name "full-width"}]
+            ]
+            [m/GridCell {:span 12}
+              [m/TextField {:label "Ipsum" :fullwidth "true"}]
+            ]
+            [m/GridCell {:span 12}
+              [m/Checkbox {} "option ONE"]
+              [m/Checkbox {} "option TWO"]
+            ]
+          ]
+        ]
+        [m/GridCell {:span 6}
+          [:div {:class-name "map"}]
+        ]
+        [m/GridCell {:span 12 :class-name "bottom-actions"}
+          [m/Button {:class-name "pull-left btn-secondary"} "Back"]
+          [m/Button {:class-name "pull-right"} "Continue"]
+        ]
+      ]
+    ]
+   ]])
 
 (defn simple-map
   [opts]

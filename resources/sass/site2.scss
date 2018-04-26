@@ -447,3 +447,104 @@ form.vertical, .fields-vertical {
 
   }
 }
+
+/* ============= Wizard Steps ================ */
+
+/* ---- classes override -----*/
+:not(.mdc-list--non-interactive)>.mdc-list-item:after, :not(.mdc-list--non-interactive)>.mdc-list-item:before {
+  background-color: transparent; // overrides hover background for SimpleListItem
+}
+.mdc-select:not(.mdc-select--disabled) .mdc-select__bottom-line {
+  background-color: rgba(0,0,0,0.12); // Bottom line color for Select = TextField
+}
+.mdc-select__menu {
+  // Fix for Select options position
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  min-width: 100% !important;
+  max-height: initial !important;
+}
+/* ---- /classes override -----*/
+  
+
+.wizard-steps {
+  counter-reset: num;
+  border-bottom: 1px solid #eff0ef;
+}
+.no-padd {
+  padding: 0;
+}
+.no-vgap > .mdc-layout-grid__inner {
+  grid-row-gap: 0;
+}
+.inline-list {
+  display: flex;
+  flex-direction: row;
+  > div {
+    color: #9a9a9a;
+    flex: 1;
+    counter-increment: num;
+    i {
+      font-size: 40px;
+      line-height: 20px;
+      &:first-child:before {
+        content: counter(num);
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 1.2rem;
+        margin: 0 0 0 .9rem;
+        display: inline-block;
+        color: #ffffff;
+        position: absolute;
+        z-index: 1;
+      }
+      &:last-child {
+        position: absolute;
+        color: rgb(255, 86, 28);
+        z-index: 2;
+        display: none;
+      }
+    }
+    &.current {
+      color: #000000;
+      font-weight: 500;
+      i:first-child {
+        color: rgb(255, 86, 28);
+      }
+    }
+    &.done {
+      color: #000000;
+      i {
+        &:first-child {
+          visibility: hidden;
+        }
+        &:last-child {
+          display: inline-block;
+        }
+      }
+    }
+    &:hover {
+      background-color: transparent !important;
+    }
+  }
+}
+.full-width {
+  width: 100%;
+}
+.map {
+  background-color: #ddd;
+  min-height: 450px;
+}
+.bottom-actions {
+  border-top: 1px solid #eff0ef;
+  padding: 12px 24px;
+}
+.btn-secondary {
+  color: #a8a8a8 !important;
+}
+.pull-left {
+  float: left;
+}
+.pull-right {
+  float: right;
+}

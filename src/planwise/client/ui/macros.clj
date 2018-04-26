@@ -39,6 +39,7 @@
     Select
     SimpleDialog
     SimpleMenu
+    SimpleListItem
     Slider
     Switch
     Tab
