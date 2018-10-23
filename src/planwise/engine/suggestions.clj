@@ -5,9 +5,12 @@
             [planwise.boundary.coverage :as coverage]
             [planwise.engine.raster :as raster]
             [planwise.engine.common :as common]
+            [clojure.java.shell :as shell]
+            [clojure.java.io :as io]
             [planwise.component.coverage.rasterize :as rasterize]
             [planwise.engine.demand :as demand]
             [planwise.util.files :as files]
+            [clojure.string :as string]
             [taoensso.timbre :as timbre]))
 
 (timbre/refer-timbre)
@@ -70,10 +73,22 @@
           provider-id coverage-info
           :other     (merge coverage-info extra-info-for-new-provider))))
 
+(defn warp-raster
+  [search-path {:keys [xres yres]}]
+  (let [search-path (string/split search-path)
+        directory   (string/join "" (drop-last search-path))
+        file-name   (last search-path)
+        new-search-path (str "half-resolution" file-name)]
+    (sh "gdalwarp" "-tr" (str xres) (str yres) search-path new-search-path)
+    (io/delete-file (io/file search-path))
+    new-search-path))
+    ;(warp-raster search-path {:xres 0.0017 :yres -0.017})
+
 (defn search-optimal-location
   [engine {:keys [engine-config config provider-set-id coverage-algorithm] :as project} {:keys [raster sources-data] :as source}]
   (let [raster        (when raster (raster/read-raster (str "data/" (:raster source) ".tif")))
-        search-path   (when raster (files/create-temp-file (str "data/scenarios/" (:id project) "/coverage-cache/") "new-provider-" ".tif"))
+        directory-path (str "data/scenarios/" (:id project) "/coverage-cache/")
+        search-path   (when raster (files/create-temp-file directory-path "new-provider-" ".tif"))
         demand-quartiles (:demand-quartiles engine-config)
         source        (assoc source :raster raster
                              :initial-set (when raster (gs/get-saturated-locations {:raster raster} demand-quartiles))
