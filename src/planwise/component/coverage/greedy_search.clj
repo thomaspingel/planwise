@@ -178,7 +178,7 @@
 
 (defn greedy-search
   [sample {:keys [search-path initial-set sources-data] :as source} coverage-fn demand-quartiles {:keys [n bound]}]
-  (info "Starting greedy search for " (first sources-data))
+  (info "Starting greedy search for " (or (first sources-data) (str "raster with " (count initial-set) " demand")))
   (let [[max & remain :as initial-set] (or initial-set sources-data)
         bound        (or bound (:avg-max (mean-initial-data 30 initial-set coverage-fn)))
         locations    (get-locations coverage-fn source max initial-set (/ bound 2) sample)]
