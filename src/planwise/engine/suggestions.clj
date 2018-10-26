@@ -74,21 +74,25 @@
           :other     (merge coverage-info extra-info-for-new-provider))))
 
 (defn warp-raster
-  [search-path {:keys [xres yres]}]
-  (let [search-path (string/split search-path)
-        directory   (string/join "" (drop-last search-path))
-        file-name   (last search-path)
-        new-search-path (str "half-resolution" file-name)]
-    (sh "gdalwarp" "-tr" (str xres) (str yres) search-path new-search-path)
-    (io/delete-file (io/file search-path))
-    new-search-path))
-    ;(warp-raster search-path {:xres 0.0017 :yres -0.017})
+  [raster-path {:keys [xres yres]}]
+  (let [raster-path* (string/split raster-path #"/")
+        directory   (string/join "/" (drop-last raster-path*))
+        file-name   (last raster-path*)
+        new-file-name (str "half-resolution-" file-name)]
+    (shell/sh "gdalwarp" "-tr" (str xres) (str yres) file-name new-file-name :dir (str directory))
+    (str directory "/" new-file-name)))
+
+(defn get-paths-and-raster
+  [raster project-id]
+  (let [half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:xres 0.017 :yres -0.017})
+        raster               (raster/read-raster half-resolution-raster-path)
+        search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
+    (raster/write-raster-file raster search-path)
+    [half-resolution-raster-path search-path raster]))
 
 (defn search-optimal-location
   [engine {:keys [engine-config config provider-set-id coverage-algorithm] :as project} {:keys [raster sources-data] :as source}]
-  (let [raster        (when raster (raster/read-raster (str "data/" (:raster source) ".tif")))
-        directory-path (str "data/scenarios/" (:id project) "/coverage-cache/")
-        search-path   (when raster (files/create-temp-file directory-path "new-provider-" ".tif"))
+  (let [[hr-raster-path search-path raster] (when raster (get-paths-and-raster ras (:id project)))
         demand-quartiles (:demand-quartiles engine-config)
         source        (assoc source :raster raster
                              :initial-set (when raster (gs/get-saturated-locations {:raster raster} demand-quartiles))
@@ -105,9 +109,10 @@
                                       (get-coverage-for-suggestion engine project-info source (assoc props :coord val))
                                       (catch Exception e
                                         (warn (str "Failed to compute coverage for coordinates " val) e))))]
-    (when raster (raster/write-raster-file raster search-path))
     (let [bound    (when provider-set-id (:avg-max (providers-set/get-radius-from-computed-coverage (:providers-set engine) criteria provider-set-id)))
           locations (gs/greedy-search 10 source coverage-fn demand-quartiles {:bound bound :n 20})]
+      (io/delete-file search-path)
+      (when-let [path hr-raster-path] (io/delete-file path))
       locations)))
 
 ;TODO; shared code with client
