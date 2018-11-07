@@ -15,10 +15,16 @@
 
 (timbre/refer-timbre)
 
+(defn get-resolution
+  [raster]
+  (let [[_ x-res _ _ _ y-res] (vec (:geotransform raster))]
+    {:x-res x-res
+     :y-res (- y-res)}))
+
 (defn count-under-geometry
   [engine polygon {:keys [raster original-sources source-set-id geom-set]}]
   (if raster
-    (let [coverage (raster/create-raster (rasterize/rasterize polygon))]
+    (let [coverage (raster/create-raster (rasterize/rasterize polygon (get-resolution raster)))]
       (demand/count-population-under-coverage raster coverage))
     (let [ids (set (sources-set/enum-sources-under-coverage (:sources-set engine) source-set-id polygon))]
       (reduce (fn [sum {:keys [quantity id]}] (+ sum (if (ids id) quantity 0))) 0 original-sources))))
@@ -40,8 +46,7 @@
 
     (let [{:keys [demand visited]} get-update
           raster (update-visited (raster/read-raster search-path) visited)
-          coverage-raster (raster/create-raster (rasterize/rasterize polygon))]
-
+          coverage-raster (raster/create-raster (rasterize/rasterize polygon (get-resolution raster)))]
       (demand/multiply-population-under-coverage! raster coverage-raster (float 0))
       (assert (zero? (count-under-geometry engine polygon {:raster raster})))
       (raster/write-raster raster search-path)
@@ -51,7 +56,7 @@
 
 (defn get-coverage-for-suggestion
   [engine {:keys [criteria region-id project-capacity]} {:keys [sources-data search-path] :as source} {:keys [provider-id coord get-avg get-update]}]
-  (let [updated-criteria      (if sources-data criteria (merge criteria {:raster search-path}))
+  (let [updated-criteria      criteria
         [lon lat :as coord]   coord
         polygon               (if coord
                                 (coverage/compute-coverage (:coverage engine) {:lat lat :lon lon} updated-criteria)
@@ -74,12 +79,12 @@
           :other     (merge coverage-info extra-info-for-new-provider))))
 
 (defn warp-raster
-  [raster-path {:keys [xres yres]}]
+  [raster-path {:keys [x-res y-res]}]
   (let [raster-path* (string/split raster-path #"/")
         directory   (string/join "/" (drop-last raster-path*))
         file-name   (last raster-path*)
-        new-file-name (str "half-resolution-" file-name)]
-    (shell/sh "gdalwarp" "-tr" (str xres) (str yres) file-name new-file-name :dir (str directory))
+        new-file-name (str "new-resolution-" file-name)]
+    (shell/sh "gdalwarp" "-tr" (str x-res) (str y-res) file-name new-file-name :dir (str directory))
     (str directory "/" new-file-name)))
 
 (defn get-paths-and-raster
@@ -89,10 +94,10 @@
         search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
     (raster/write-raster-file raster search-path)
     [half-resolution-raster-path search-path raster]))
-
+;;upto 99
 (defn search-optimal-location
   [engine {:keys [engine-config config provider-set-id coverage-algorithm] :as project} {:keys [raster sources-data] :as source}]
-  (let [[hr-raster-path search-path raster] (when raster (get-paths-and-raster ras (:id project)))
+  (let [[hr-raster-path search-path raster] (when raster (get-paths-and-raster raster (:id project)))
         demand-quartiles (:demand-quartiles engine-config)
         source        (assoc source :raster raster
                              :initial-set (when raster (gs/get-saturated-locations {:raster raster} demand-quartiles))
