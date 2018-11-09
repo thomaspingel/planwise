@@ -130,10 +130,11 @@
      (.delete datasource)
      (.delete srs)))
 
-  ([polygon]
-   {:pre [(s/valid? ::pg/polygon polygon)]}
+  ([polygon resolution]
+   {:pre [(s/valid? ::pg/polygon polygon)
+          (s/valid? ::resolution resolution)]}
    (let [ref-coords     {:lat 0 :lon 0}
-         resolution     {:x-res 1/1200 :y-res 1/1200}
+         resolution     (or resolution {:x-res 1/1200 :y-res 1/1200})
          srs            (srs-from-pg polygon)
          geometry       (pg->geometry polygon)
          envelope       (envelope geometry)

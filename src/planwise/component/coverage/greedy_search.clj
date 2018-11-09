@@ -30,9 +30,18 @@
     (fast-raster-saturated-locations raster b2)
     (mapv (fn [{:keys [lon lat quantity]}] [lon lat quantity]) (sort-by :quantity > sources-data))))
 
+
 (defrecord demand-unit [lon lat value])
 (defn location [demand-unit] (select-keys demand-unit [:lon :lat]))
 (defn value [demand-unit] (:value demand-unit))
+
+(defn get-demand-units
+  [{:keys [raster sources-data]} [_ b0 b1 b2 _ :as demand-quartiles]]
+  (map
+   #(apply ->demand-unit %)
+   (if raster
+     (mapv vec (fast-raster-saturated-locations raster b2))
+     (mapv (fn [{:keys [lon lat quantity]}] [lon lat quantity]) (sort-by :quantity > sources-data)))))
 
 (defprotocol searchingSet
   (start-from [demand] "Location given to start maximal-neighbourhood search")
@@ -48,28 +57,68 @@
   (assoc s :demand new-vector))
 
 (defprotocol SearchContainer
-  (set-source [source] "Demand source resources")
+  (source-type [source] "Demand source resources")
   (searching-set [initial-locations] "Vector of locations sorted by higher demand.")
-  (selected-locations [selected-locations] "Locations computed after maximal-neighbourhood search. Its length is less or equal than iterations on searching algorithm"))
+  (selected-locations [selected-locations] "Locations computed after maximal-neighbourhood search.
+                                            Its length is less or equal than iterations on searching algorithm")
+  (coverage [coverage-fn] "Coverage criteria set to explore demand")
+  (radius-coverage [bound] "Mean value of criteria coverage in demand sample"))
 
-(defrecord RasterSearchContainer [search-path raster demand-quartiles selected-locations]
-  SearchContainer
-  (set-source [this] search-path)
-  (searching-set [this]
-    (-> searching-set* (get-saturated-locations {:raster raster} demand-quartiles)))
-  (selected-locations [this] selected-locations))
+(defn condition-for-getting-locations
+  [search-container times sample]
+  (or (empty? (remove-first (searching-set search-container)))
+      (nil? (start-from (searching-set search-container)))
+      (= times sample)))
 
 (defn update* [search-container key val]
   (if (= key :searching-set)
     (update-search (searching-set search-container) val)
     (assoc search-container key val)))
 
-(defrecord PointSearchContainer [sources-data demand-quartiles selected-locations]
+(defn find-centroid-and-update-demand
+  [search-container]
+  (let [coverage-fn (coverage search-container)
+        source      (source-type search-container) ;map
+        from        (start-from (searching-set search-container))
+        demand      (remove-first (searching-set search-container))
+        avg-max     (radius-coverage search-container)]
+  ;(update-demand coverage-fn source from demand bound)
+))
+
+(defn mean-initial-data*
+  [n search-container]
+  (let [demand      (take n
+                          (random-sample 0.8
+                                         (:demand (searching-set search-container))))
+        coverage-fn (coverage search-container)
+        total-max   (reduce (fn [tm demand-unit]
+                              (let [{:keys [max]} (or (coverage-fn (location demand-unit) {:get-avg true}) {:max 0})]
+                                (+ tm max))) 0 demand)]
+    (/ total-max n)))
+
+(defrecord RasterSearchContainer
+           [search-path raster demand-quartiles selected-locations coverage-fn bound]
   SearchContainer
-  (set-source [this] sources-data)
+  (source-type [this] search-path)
   (searching-set [this]
-    (-> searching-set* (get-saturated-locations {:sources-data sources-data} demand-quartiles)))
-  (selected-locations [this] selected-locations))
+    (->searching-set* (get-demand-units {:raster raster} demand-quartiles)))
+  (selected-locations [this] selected-locations)
+  (coverage [this] coverage-fn)
+  (radius-coverage [this]
+    (or bound
+        (mean-initial-data* 30 this))))
+
+(defrecord PointSearchContainer
+           [sources-data demand-quartiles selected-locations coverage-fn bound]
+  SearchContainer
+  (source-type [this] sources-data)
+  (searching-set [this]
+    (-> searching-set* (get-demand-units {:sources-data sources-data} demand-quartiles)))
+  (selected-locations [this] selected-locations)
+  (coverage [this] coverage-fn)
+  (radius-coverage [this]
+    (or bound
+        (mean-initial-data* 30 this))))
 
 ; (def starting-raster-search (-> RasterSearchContainer search-path initial-set max []))
 ; (def starting-point-search (-> PoitnSearchContainer sources-data initial-set max []))
@@ -125,7 +174,6 @@
         [r0 r1] (reduce (fn [[r0 r1] [l0 l1]] [(+ r0 l0) (+ r1 l1)]) [0 0] set-points)]
     (if (pos? total) (map #(/ % total) [r0 r1]) (first set-points))))
 
-
 (defn mean-initial-data
   [n demand coverage-fn]
   (let [locations (take n (random-sample 0.8 demand))
@@ -136,6 +184,7 @@
 
 (defn neighbour-fn
   ([coord bound]
+   (println coord bound)
    (fn [[lon lat _]] (< (euclidean-distance (drop-last coord) [lon lat]) bound)))
   ([coord radius eps]
    (fn [[lon lat _]] (< (- (euclidean-distance (drop-last coord) [lon lat]) radius) eps))))
@@ -170,6 +219,8 @@
              [lon lat _ :as center] demand-point
              visited #{[lon lat]}
              interior interior]
+
+        (println "demand" demand-point)
 
         (if (<= (- avg-max sum) 0)
 
@@ -213,21 +264,35 @@
             (recur (inc times) (conj locations location) from* demand*))
           (recur (inc times) locations (first demand*) (rest demand*)))))))
 
+(defn get-locations*
+  [search-container sample]
+  (loop [times 0
+         container search-container]
+    (if (condition-for-getting-locations container sample)
+      (remove #(zero? (:coverage %)) (selected-locations container))
+      (let [locations              (selected-locations container)
+            new-instance-container (find-centroid-and-update-demand search-container)
+            same-locations?        (= locations (selected-locations new-instance-container))]
+        (if same-locations?
+          (recur times new-instance-container)
+            ;let demand* searching-set*. sort-by :value > remove-first searching-set
+          (recur (inc times) new-instance-container))))))
+
 (defn greedy-search
   [sample {:keys [search-path initial-set sources-data] :as source} coverage-fn demand-quartiles {:keys [n bound]}]
   (info "Starting greedy search for " (or (first sources-data) (str "raster with " (count initial-set) " demand")))
   (let [[max & remain :as initial-set] (or initial-set sources-data)
         bound        (or bound (mean-initial-data 30 initial-set coverage-fn))
         locations    (get-locations coverage-fn source max initial-set (/ bound 2) sample)]
-    (when search-path (clojure.java.io/delete-file search-path true))
+    ;(when search-path (clojure.java.io/delete-file search-path true))
     (sort-by :coverage > locations)))
 
 (defn maximal-neighbourhood-search
-  [sample search-container coverage-fn bound]
-  (info "Starting search for " (or (first sources-data) (str "raster with " (count initial-set) " demand")))
-  (let [source (set-source search-container)
-        from   (start-from (searching-set search-container))
-        bound  (or bound (mean-initial-data 30 (:demand (searching-set search-container)) coverage-fn))
-        locations (get-locations* coverage-fn source from initial-set (/ bound 2) sample)]
-    (when search-path (clojure.java.io/delete-file search-path true))
+  [sample search-container]
+  (info "Starting search for ")
+  (let [source    (source-type search-container)
+        from      (start-from (searching-set search-container))
+        locations (get-locations* search-container sample)]
+    ;(when-let [search-path (:search-path search-container)]
+     ;(clojure.java.io/delete-file search-path true))
     (sort-by :coverage > locations)))

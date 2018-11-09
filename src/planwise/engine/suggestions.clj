@@ -40,10 +40,10 @@
       (assert (every? zero? (map #(aget data %) idxs)))
       (raster/create-raster-from-existing raster data))))
 
+;RE-define
 (defn get-demand-source-updated
   [engine {:keys [sources-data search-path demand-quartiles]} polygon get-update]
   (if search-path
-
     (let [{:keys [demand visited]} get-update
           raster (update-visited (raster/read-raster search-path) visited)
           coverage-raster (raster/create-raster (rasterize/rasterize polygon (get-resolution raster)))]
@@ -89,12 +89,12 @@
 
 (defn get-paths-and-raster
   [raster project-id]
-  (let [half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:xres 0.017 :yres -0.017})
+  (let [half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:x-res 0.017 :y-res -0.017})
         raster               (raster/read-raster half-resolution-raster-path)
         search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
     (raster/write-raster-file raster search-path)
     [half-resolution-raster-path search-path raster]))
-;;upto 99
+
 (defn search-optimal-location
   [engine {:keys [engine-config config provider-set-id coverage-algorithm] :as project} {:keys [raster sources-data] :as source}]
   (let [[hr-raster-path search-path raster] (when raster (get-paths-and-raster raster (:id project)))
@@ -116,8 +116,8 @@
                                         (warn (str "Failed to compute coverage for coordinates " val) e))))]
     (let [bound    (when provider-set-id (:avg-max (providers-set/get-radius-from-computed-coverage (:providers-set engine) criteria provider-set-id)))
           locations (gs/greedy-search 10 source coverage-fn demand-quartiles {:bound bound :n 20})]
-      (io/delete-file search-path)
-      (when-let [path hr-raster-path] (io/delete-file path))
+      ;(io/delete-file search-path)
+      ;(when-let [path hr-raster-path] (io/delete-file path))
       locations)))
 
 ;TODO; shared code with client
