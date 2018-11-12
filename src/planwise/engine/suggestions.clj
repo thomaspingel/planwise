@@ -40,7 +40,6 @@
       (assert (every? zero? (map #(aget data %) idxs)))
       (raster/create-raster-from-existing raster data))))
 
-;RE-define
 (defn get-demand-source-updated
   [engine {:keys [sources-data search-path demand-quartiles]} polygon get-update]
   (if search-path
@@ -53,6 +52,13 @@
       (gs/get-saturated-locations {:raster raster} demand-quartiles))
 
     (coverage/locations-outside-polygon (:coverage engine) polygon (:demand get-update))))
+
+(defn update-search-path-data
+  [engine search-path polygon]
+  (let [searching-raster (raster/read-raster search-path)
+        coverage-raster (raster/create-raster (rasterize/rasterize polygon (get-resolution searching-raster)))]
+    (demand/multiply-population-under-coverage! searching-raster coverage-raster (float 0))
+    (assert (zero? (count-under-geometry engine polygon {:raster searching-raster})))))
 
 (defn get-coverage-for-suggestion
   [engine {:keys [criteria region-id project-capacity]} {:keys [sources-data search-path] :as source} {:keys [provider-id coord get-avg get-update]}]
@@ -73,10 +79,12 @@
                                      :location {:lat lat :lon lon}}]
 
     (cond get-avg    {:max (coverage/get-max-distance-from-geometry (:coverage engine) polygon)}
-          get-update {:location-info (merge coverage-info extra-info-for-new-provider)
-                      :updated-demand (get-demand-source-updated engine source polygon get-update)}
-          provider-id coverage-info
-          :other     (merge coverage-info extra-info-for-new-provider))))
+          get-update (do
+                       (update-search-path-data engine search-path polygon)
+                       {:location-info (merge coverage-info extra-info-for-new-provider)
+                        :updated-demand (get-demand-source-updated engine source polygon get-update)}
+                       provider-id coverage-info
+                       :other     (merge coverage-info extra-info-for-new-provider)))))
 
 (defn warp-raster
   [raster-path {:keys [x-res y-res]}]
@@ -119,6 +127,27 @@
       ;(io/delete-file search-path)
       ;(when-let [path hr-raster-path] (io/delete-file path))
       locations)))
+
+(defn raster-search-for-optimal-location
+  [engine project raster]
+  (let [{:keys [engine-config config provider-set-id coverage-algorithm]} project
+        [new-raster-path search-path new-raster] (get-paths-and-raster raster (:id project))
+        demand-quartiles (demand/compute-population-quartiles new-raster)
+        source  {:raster new-raster
+                 :initial-set (gs/get-saturated-locations {:raster new-raster} demand-quartiles)
+                 :search-path search-path
+                 :demand-quartiles demand-quartiles}
+        criteria  (assoc (get-in project [:config :coverage :filter-options]) :algorithm (keyword coverage-algorithm))
+        project-info {:criteria criteria
+                      :region-id (:region-id project)
+                      :project-capacity (get-in config [:providers :capacity])}
+        coverage-fn (fn [val props] (try
+                                      (get-coverage-for-suggestion engine project-info source (assoc props :coord val))
+                                      (catch Exception e
+                                        (warn (str "Failed to compute coverage for coordinates " (vec val)) e))))
+        bound       (:avg-max (providers-set/get-radius-from-computed-coverage (:providers-set engine) criteria provider-set-id))
+        starting-search-container (gs/->RasterSearchContainer search-path new-raster demand-quartiles [] coverage-fn bound)]
+    (gs/maximal-neighbourhood-search 10 starting-search-container)))
 
 ;TODO; shared code with client
 (defn- get-investment-from-project-config

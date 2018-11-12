@@ -334,9 +334,12 @@
 
 (defn get-suggestions-for-new-provider-location
   [store {:keys [sources-set-id] :as project} {:keys [raster sources-data] :as scenario}]
-  (engine/search-optimal-locations (:engine store) project  {:raster raster
-                                                             :sources-data sources-data
-                                                             :sources-set-id sources-set-id}))
+  ;(if raster
+  (engine/raster-search-for-optimal-location (:engine store) project raster)
+   ;(engine/search-optimal-locations-by-point (:engine store) project sources-data sources-set-id))
+  (engine/search-optimal-locations (:engine store) project {:raster raster
+                                                            :sources-data sources-data
+                                                            :sources-set-id sources-set-id}))
 
 (defn- get-current-investment
   [changeset]
