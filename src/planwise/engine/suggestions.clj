@@ -15,7 +15,12 @@
 
 (timbre/refer-timbre)
 
-(defn get-resolution
+;Auxiliar functions
+(defn update-sources-data
+  [engine {:keys [sources-data demand-quartiles]} polygon get-update]
+  (coverage/locations-outside-polygon (:coverage engine) polygon (:demand get-update)))
+
+(defn- get-resolution
   [raster]
   (let [[_ x-res _ _ _ y-res] (vec (:geotransform raster))]
     {:x-res x-res
@@ -29,34 +34,29 @@
     (let [ids (set (sources-set/enum-sources-under-coverage (:sources-set engine) source-set-id polygon))]
       (reduce (fn [sum {:keys [quantity id]}] (+ sum (if (ids id) quantity 0))) 0 original-sources))))
 
-(defn update-visited
-  [{:keys [xsize geotransform data] :as raster} visited]
-  (if (empty? (vec visited))
-    raster
-    (let [idxs (mapv (fn [coord] (let [[x y] (gs/coord->pixel geotransform coord)]
-                                   (+ (* y xsize) x))) (remove empty? (vec visited)))]
-      (doseq [i idxs]
-        (aset data i (float 0)))
-      (assert (every? zero? (map #(aget data %) idxs)))
-      (raster/create-raster-from-existing raster data))))
-
-(defn get-demand-source-updated
-  [engine {:keys [sources-data search-path demand-quartiles]} polygon get-update]
-  (if search-path
-    (let [{:keys [visited]} get-update
-          raster (update-visited (raster/read-raster search-path) visited)
-          coverage-raster (raster/create-raster (rasterize/rasterize polygon (get-resolution raster)))]
-      (demand/multiply-population-under-coverage! raster coverage-raster (float 0))
-      (assert (zero? (count-under-geometry engine polygon {:raster raster})))
-      (raster/write-raster raster search-path))
-    (coverage/locations-outside-polygon (:coverage engine) polygon (:demand get-update))))
-
-(defn update-search-path-data
+(defn- update-search-path-data
   [engine search-path polygon]
   (let [searching-raster (raster/read-raster search-path)
         coverage-raster (raster/create-raster (rasterize/rasterize polygon (get-resolution searching-raster)))]
     (demand/multiply-population-under-coverage! searching-raster coverage-raster (float 0))
     (assert (zero? (count-under-geometry engine polygon {:raster searching-raster})))))
+
+(defn- warp-raster
+  [raster-path {:keys [x-res y-res]}]
+  (let [raster-path* (string/split raster-path #"/")
+        directory   (string/join "/" (drop-last raster-path*))
+        file-name   (last raster-path*)
+        new-file-name (str "new-resolution-" file-name)]
+    (shell/sh "gdalwarp" "-tr" (str x-res) (str y-res) file-name new-file-name :dir (str directory))
+    (str directory "/" new-file-name)))
+
+(defn- get-paths-and-raster
+  [raster project-id]
+  (let [half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:x-res 0.017 :y-res -0.017})
+        raster               (raster/read-raster half-resolution-raster-path)
+        search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
+    (raster/write-raster-file raster search-path)
+    [half-resolution-raster-path search-path raster]))
 
 ;;TODO; refactor as multimethod
 (defn get-coverage-for-suggestion
@@ -86,23 +86,6 @@
           provider-id coverage-info
           :other     (merge coverage-info extra-info-for-new-provider))))
 
-(defn warp-raster
-  [raster-path {:keys [x-res y-res]}]
-  (let [raster-path* (string/split raster-path #"/")
-        directory   (string/join "/" (drop-last raster-path*))
-        file-name   (last raster-path*)
-        new-file-name (str "new-resolution-" file-name)]
-    (shell/sh "gdalwarp" "-tr" (str x-res) (str y-res) file-name new-file-name :dir (str directory))
-    (str directory "/" new-file-name)))
-
-(defn get-paths-and-raster
-  [raster project-id]
-  (let [half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:x-res 0.017 :y-res -0.017})
-        raster               (raster/read-raster half-resolution-raster-path)
-        search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
-    (raster/write-raster-file raster search-path)
-    [half-resolution-raster-path search-path raster]))
-
 (defn raster-search-for-optimal-location
   [engine project raster]
   (let [{:keys [engine-config config provider-set-id coverage-algorithm]} project
@@ -123,7 +106,6 @@
                           (warn (str "Failed to compute coverage for coordinates " (gs/location demand-unit)) e))))
         bound       (:avg-max (providers-set/get-radius-from-computed-coverage (:providers-set engine) criteria provider-set-id))
         starting-search-container (gs/->RasterSearchContainer search-path new-raster demand-quartiles [] coverage-fn bound)]
-    (println "Look " (keys starting-search-container))
     (gs/maximal-neighbourhood-search 10 starting-search-container)))
 
 ;TODO; shared code with client
@@ -299,11 +281,3 @@
 
   (def project-test (generate-project raster-test criteria))
   (search-optimal-location engine project-test {} raster-test))
-
-; (def engine (:planwise.component/engine system))
-; (def project   (planwise.component.projects2/get-project (:planwise.component/projects2 system) 181))
-; (def scenario  (planwise.component.scenarios/get-scenario (:planwise.component/scenarios system) 1496))
-; (planwise.engine.suggestions/get-sorted-interventions engine project scenario)
-; (planwise.component.providers-set/get-providers-with-coverage-in-region
-; (:planwise.component/providers-set system)
-; 16 1 {:walking-time 120, :algorithm "walking-friction", :region-id 85})
