@@ -479,8 +479,6 @@
     (clear-project-cache engine project))
   (compute-scenario [engine project initial-scenario scenario]
     (compute-scenario engine project initial-scenario scenario))
-  (search-optimal-locations [engine project source]
-    (suggestions/search-optimal-location engine project source))
   (raster-search-for-optimal-location [engine project raster]
     (suggestions/raster-search-for-optimal-location engine project raster))
   (search-optimal-interventions [engine project scenario settings]

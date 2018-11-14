@@ -21,6 +21,10 @@
 
 ;Auxiliar functions
 
+(defrecord demand-unit [lon lat value])
+(defn location [demand-unit] [(:lon demand-unit) (:lat demand-unit)])
+(defn value [demand-unit] (:value demand-unit))
+
 (defn euclidean-distance-squared
   [[a0 a1] [b0 b1]]
   (+ (* (- b0 a0) (- b0 a0)) (* (- b1 a1) (- b1 a1))))
@@ -58,7 +62,8 @@
 
 (defn get-weighted-centroid
   [set-points]
-  (let [[r0 r1 total-w]  (reduce (fn [[r0 r1 partial-w] [l0 l1 w]]
+  (let [set-points (map (fn [a] (conj (location a) (value a))) set-points)
+        [r0 r1 total-w]  (reduce (fn [[r0 r1 partial-w] [l0 l1 w]]
                                    [(+ r0 (* w l0)) (+ r1 (* w l1)) (+ partial-w w)]) [0 0 0] set-points)]
     (if (pos? total-w)
       (map #(/ % total-w) [r0 r1])
@@ -91,25 +96,17 @@
                               (+ tm max))) 0 locations)]
     (/ total-max n)))
 
-(defn neighbour-fn
-  ([coord bound]
-   (fn [[lon lat _]] (< (euclidean-distance (drop-last coord) [lon lat]) bound)))
-  ([coord radius eps]
-   (fn [[lon lat _]] (< (- (euclidean-distance (drop-last coord) [lon lat]) radius) eps))))
-
 (defn neighbour-fn*
-  ([coord bound]
-   (fn [{:keys [lon lat]}] (< (euclidean-distance coord [lon lat]) bound)))
-  ([coord radius eps]
-   (fn [{:keys [lon lat]}] (< (- (euclidean-distance coord [lon lat]) radius) eps))))
-
-(defrecord demand-unit [lon lat value])
-(defn location [demand-unit] [(:lon demand-unit) (:lat demand-unit)])
-(defn value [demand-unit] (:value demand-unit))
+  ([center bound]
+   (fn [p]
+     (< (euclidean-distance (location center) (location p)) bound)))
+  ([center radius eps]
+   (fn [p]
+     (< (- (euclidean-distance (location center) (location p)) radius) eps))))
 
 (defn get-demand-units
   [{:keys [raster sources-data]} [_ b0 b1 b2 _ :as demand-quartiles]]
-  (map
+  (mapv
    #(apply ->demand-unit %)
    (if raster
      (mapv vec (fast-raster-saturated-locations raster b2))
@@ -124,13 +121,13 @@
   (start-from [this] (first demand))
   (remove-first [this] (rest demand)))
 
-; (defn update-demand-set
-;   [semand-set new-vector]
-;   (assoc set :demand new-vector))
+(defn update-demand-set
+  [demand-set new-vector]
+  (assoc set :demand new-vector))
 
 (defprotocol SearchContainer
   (source-type [source] "Demand source resources")
-  (demand-set [initial-locations] "Vector of locations sorted by higher demand.")
+  (demand-set  [vector] [vector raster] "Vector of locations sorted by higher demand.")
   (selected-locations [selected-locations] "Locations computed after maximal-neighbourhood search.
                                             Its length is less or equal than iterations on searching algorithm")
   (coverage [coverage-fn] "Coverage criteria set to explore demand")
@@ -142,10 +139,10 @@
       (nil? (start-from (demand-set search-container)))
       (= times sample)))
 
-; (defn update* [search-container key val]
-;   (if (= key :demand-set)
-;     (update-search (demand-set search-container) val)
-;     (assoc search-container key val)))
+(defn update* [search-container key val]
+  (if (= key :demand-set)
+    (update-demand-set (demand-set search-container) val)
+    (assoc search-container key val)))
 
 (defn mean-initial-data*
   [n search-container]
@@ -162,162 +159,108 @@
            [search-path raster demand-quartiles selected-locations coverage-fn bound]
   SearchContainer
   (source-type [this] search-path)
-  (demand-set [this]
-    (->demand-set* (get-demand-units {:raster raster} demand-quartiles)))
+  (demand-set  [this given-raster]
+    (->demand-set* (get-demand-units {:raster given-raster} demand-quartiles)))
+  (demand-set [this] (demand-set this raster))
   (selected-locations [this] selected-locations)
   (coverage [this] coverage-fn)
   (radius-coverage [this]
     (or bound
         (mean-initial-data* 30 this))))
 
-(defrecord PointSearchContainer
-           [sources-data demand-quartiles selected-locations coverage-fn bound]
-  SearchContainer
-  (source-type [this] sources-data)
-  (demand-set [this]
-    (-> demand-set* (get-demand-units {:sources-data sources-data} demand-quartiles)))
-  (selected-locations [this] selected-locations)
-  (coverage [this] coverage-fn)
-  (radius-coverage [this]
-    (or bound
-        (mean-initial-data* 30 this))))
+; (defrecord PointSearchContainer
+;            [sources-data demand-quartiles selected-locations coverage-fn bound]
+;   SearchContainer
+;   (source-type [this] sources-data)
+;   (demand-set [this]
+;     (-> demand-set* (get-demand-units {:sources-data sources-data} demand-quartiles)))
+;   (selected-locations [this] selected-locations)
+;   (coverage [this] coverage-fn)
+;   (radius-coverage [this]
+;     (or bound
+;         (mean-initial-data* 30 this))))
 
 ; (def starting-point-search (-> PoitnSearchContainer sources-data initial-set max []))
-; ;---------------------------------------------------------------------------------------------------------
 
 (defn next-neighbour
   ([demand center radius]
    (next-neighbour demand center radius (/ radius 1000)))
   ([demand center radius eps]
-   (let [in-frontier? (fn [p] (neighbour-fn p radius eps))
-         frontier     (filter (in-frontier? center) demand)]
-     (get-weighted-centroid frontier))))
+   (let [in-frontier? (fn [p] (neighbour-fn* p radius eps))
+         frontier     (filter (in-frontier? center) demand)
+         [lon lat :as new]    (if-not (empty? frontier) (get-weighted-centroid frontier))]
+     (if new
+       (->demand-unit lon lat nil)
+       center))))
 
 (defn find-centroid-from-demand-unit
   [demand-unit search-container]
-  (let [demand      (remove-first (demand-set search-container))
+  (let [demand      (remove-first
+                     (demand-set
+                      search-container
+                      (raster/read-raster (:search-path search-container))))
         avg-max     (radius-coverage search-container)
         is-neighbour? (memoize
-                       (fn [{:keys [lat lon value]} r]
-                         (neighbour-fn* [lon lat value] r)))]
+                       (fn [center r]
+                         (neighbour-fn* center r)))]
     (loop [sum      0
            radius   avg-max
            center    demand-unit
            interior (filter (is-neighbour? center avg-max) demand)]
       (if (<= (- avg-max sum) 0)
-        (get-centroid (mapv (fn [{:keys [lat lon value]}] [lon lat value]) interior))
-        (let [next-center (get-weighted-centroid
-                           (mapv
-                            (fn [{:keys [lat lon value]}] [lon lat value])
-                            interior))
-              next-radius (euclidean-distance (location center) next-center)
+        center
+        (let [next-center (next-neighbour demand center radius)
+              next-radius (euclidean-distance (location center) (location next-center))
               step        (- radius next-radius)]
           (if (and (> step 0) (pos? next-radius))
             (recur (+ sum step) next-radius next-center (filter (is-neighbour? next-center next-radius)))
-                ;re-view
             (recur avg-max radius center interior)))))))
 
-(defn update-demand-set
+
+(defn update-visit
+  [{:keys [xsize geotransform data] :as raster} visited]
+  (let [idx ((fn [coord] (let [[x y] (coord->pixel geotransform coord)]
+                           (+ (* y xsize) x))) visited)]
+    (aset data idx (float 0))
+    (assert (zero? (aget data idx)))
+    (raster/create-raster-from-existing raster data)))
+
+(defn update-searching-raster
+  [search-path {:keys [lon lat]}]
+  (let [raster (update-visit (raster/read-raster search-path) [lon lat])]
+    (raster/write-raster raster search-path)))
+
+(defn raster-update-demand-set
   [search-container]
-  (let [center      (start-from (demand-set search-container))
+  (let [searching-raster (raster/read-raster (:search-path search-container))
+        center      (start-from (demand-set search-container searching-raster))
+        coverage-fn (coverage search-container)
         raster      (:raster search-container)
         get-value-from-raster (fn [{:keys [lon lat] :as demand-unit}]
                                 (aget (:data raster) (get-index [lon lat] raster)))
-        geo-cent    (find-centroid-from-demand-unit center search-container)]
-    geo-cent))
-
-
-
-(defn update-demand
-  [coverage-fn {:keys [sources-data raster]} demand-point demand avg-max]
-  {:pre [(and (not (nil? demand)) (not (nil? demand-point)))]}
-
-  (let [source (or raster sources-data)
-        get-value-fn  (if raster
-                        (fn [location] (aget (:data source) (get-index location source)))
-                        (fn [location] (last (filter #(= (drop-last %) location) source))))
-        is-neighbour? (memoize (fn [coord r] (neighbour-fn coord r)))
-        interior      (filter (is-neighbour? demand-point avg-max) demand)]
-
-    (if (empty? interior)
-
-      (let [division (group-by (is-neighbour? demand-point avg-max) demand)
-            {:keys [location-info updated-demand]} (coverage-fn (drop-last demand-point) {:get-update {:demand demand}})]
-        [location-info updated-demand])
-
-      (loop [sum 0
-             radius avg-max
-             [lon lat _ :as center] demand-point
-             visited #{[lon lat]}
-             interior interior]
-
-        (println "demand" demand-point)
-
-        (if (<= (- avg-max sum) 0)
-
-          (let [interior (filter (is-neighbour? center avg-max) demand)
-                geo-cent (get-centroid interior)
-                {:keys [location-info updated-demand]} (coverage-fn geo-cent {:get-update {:demand demand
-                                                                                           :visited visited}})]
-            [location-info updated-demand])
-
-          (let [location (next-neighbour interior center radius)
-                visited  (clojure.set/union visited #{(vec location)})]
-
-            (if (nil? location)
-
-              (recur avg-max radius center visited demand)
-
-              (let [value       (get-value-fn location)
-                    next-center (conj (vec location) value)
-                    next-radius (euclidean-distance [lon lat] location)
-                    step        (- radius next-radius)]
-
-
-                (if (and (> step 0) (pos? next-radius))
-                  (recur (+ sum step) next-radius next-center visited (filter (is-neighbour? next-center next-radius) demand))
-                  (recur avg-max radius center visited interior))))))))))
-
-(defn get-locations
-  [coverage-fn source from initial-set bound sample]
-  {:pre [(pos? bound)]}
-
-  (loop [times 0
-         locations []
-         from   (first initial-set)
-         demand (rest initial-set)]
-
-    (if (or (nil? demand) (nil? from) (= times sample))
-      (remove #(zero? (:coverage %)) locations)
-      (let [[location demand*] (update-demand coverage-fn source from demand bound)]
-        (if location
-          (let [[from* & demand* :as set] (when demand* (sort-by last > demand*))]
-            (recur (inc times) (conj locations location) from* demand*))
-          (recur (inc times) locations (first demand*) (rest demand*)))))))
+        final-center (let [geo-cent (find-centroid-from-demand-unit center search-container)]
+                       (assoc geo-cent :value (get-value-from-raster geo-cent)))
+        location     (:location-info (coverage-fn final-center {:get-update {}}))]
+    (update-searching-raster (:search-path search-container) center)
+    (info "Show Center " center)
+    (if location
+      (assoc search-container :selected-locations (conj (selected-locations search-container) location))
+      search-container)))
 
 (defn get-locations*
   [search-container sample]
   (loop [times 0
          container search-container]
-    (info "TIMES " times "container" container)
+    (info "TIMES " times)
     (if (condition-for-getting-locations container times sample)
       (remove #(zero? (:coverage %)) (selected-locations container))
       (let [locations              (selected-locations container)
-            new-instance-container (update-demand-set container)
+            new-instance-container (raster-update-demand-set container)
             same-locations?        (= locations (selected-locations new-instance-container))]
         (if same-locations?
           (recur times new-instance-container)
             ;let demand* demand-set*. sort-by :value > remove-first demand-set
           (recur (inc times) new-instance-container))))))
-
-(defn greedy-search
-  [sample {:keys [search-path initial-set sources-data] :as source} coverage-fn demand-quartiles {:keys [n bound]}]
-  (info "Starting greedy search for " (or (first sources-data) (str "raster with " (count initial-set) " demand")))
-  (let [[max & remain :as initial-set] (or initial-set sources-data)
-        bound        (or bound (mean-initial-data 30 initial-set coverage-fn))
-        locations    (get-locations coverage-fn source max initial-set (/ bound 2) sample)]
-    ;(when search-path (clojure.java.io/delete-file search-path true))
-    (sort-by :coverage > locations)))
 
 (defn maximal-neighbourhood-search
   [sample search-container]
