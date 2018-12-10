@@ -41,19 +41,29 @@
     (demand/multiply-population-under-coverage! searching-raster coverage-raster (float 0))
     (assert (zero? (count-under-geometry engine polygon {:raster searching-raster})))))
 
-(defn- warp-raster
+(defn warp-raster
   [raster-path {:keys [x-res y-res]}]
   (let [raster-path* (string/split raster-path #"/")
         directory   (string/join "/" (drop-last raster-path*))
         file-name   (last raster-path*)
         new-file-name (str "new-resolution-" file-name)]
-    (shell/sh "gdalwarp" "-tr" (str x-res) (str y-res) file-name new-file-name :dir (str directory))
+    (shell/sh "gdalwarp" "-tr" (str x-res) (str y-res) file-name new-file-name :dir (str directory) "-r" "average")
     (str directory "/" new-file-name)))
+
+(defn scale-raster-after-resampling
+ [{:keys [x-res y-res] :as old_resolution} raster]
+(let [xsize (:xsize raster)
+      ysize (:ysize raster)
+      factor (/  (* x-res y-res) (* xsize ysize))
+      data   (map (fn [a] (if (not= a (:nodata a)) (* factor a))) (:data raster))]
+    (raster/create-raster-from-existing raster data)))
 
 (defn- get-paths-and-raster
   [raster project-id]
-  (let [half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:x-res 0.017 :y-res -0.017})
-        raster               (raster/read-raster half-resolution-raster-path)
+  (let [{:keys [ysize xsize]} raster
+        old_resolution {:x-res xsize :y-res ysize}
+        half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:x-res 0.0017 :y-res -0.0017})
+        raster               (scale-raster-after-resampling old_resolution (raster/read-raster half-resolution-raster-path))
         search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
     (raster/write-raster-file raster search-path)
     [half-resolution-raster-path search-path raster]))
