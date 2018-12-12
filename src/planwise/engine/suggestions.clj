@@ -51,20 +51,23 @@
     (str directory "/" new-file-name)))
 
 (defn scale-raster-after-resampling
- [{:keys [x-res y-res] :as old_resolution} raster]
-(let [xsize (:xsize raster)
-      ysize (:ysize raster)
-      factor (/  (* x-res y-res) (* xsize ysize))
-      data   (map (fn [a] (if (not= a (:nodata a)) (* factor a))) (:data raster))]
-    (raster/create-raster-from-existing raster data)))
+  [raster total-demand]
+  (let [new-total-demand (demand/count-population raster)
+        factor (/ total-demand new-total-demand)]
+    (demand/multiply-population! raster factor)))
 
 (defn- get-paths-and-raster
-  [raster project-id]
-  (let [{:keys [ysize xsize]} raster
-        old_resolution {:x-res xsize :y-res ysize}
-        half-resolution-raster-path (warp-raster (str "data/" raster ".tif") {:x-res 0.0017 :y-res -0.0017})
-        raster               (scale-raster-after-resampling old_resolution (raster/read-raster half-resolution-raster-path))
+  [raster-path project-id]
+  (let [{:keys [xsize ysize] :as raster} (raster/read-raster (str "data/" raster-path ".tif"))
+        total-demand (demand/count-population raster)
+        old_resolution {:x-size xsize :y-size ysize}
+        half-resolution-raster-path (warp-raster (str "data/" raster-path ".tif") {:x-res 0.0017 :y-res -0.0017})
+        raster               (raster/read-raster half-resolution-raster-path)
         search-path          (files/create-temp-file (str "data/scenarios/" project-id "/coverage-cache/") "new-provider-" ".tif")]
+
+    (scale-raster-after-resampling raster total-demand)
+    (assert (< (Math/abs (- total-demand (demand/count-population raster))) 50))
+
     (raster/write-raster-file raster search-path)
     [half-resolution-raster-path search-path raster]))
 
@@ -97,9 +100,9 @@
           :other     (merge coverage-info extra-info-for-new-provider))))
 
 (defn raster-search-for-optimal-location
-  [engine project raster]
+  [engine project raster_path]
   (let [{:keys [engine-config config provider-set-id coverage-algorithm]} project
-        [new-raster-path search-path new-raster] (get-paths-and-raster raster (:id project))
+        [new-raster-path search-path new-raster] (get-paths-and-raster raster_path (:id project))
         demand-quartiles (demand/compute-population-quartiles new-raster)
         source  {:raster new-raster
                  :initial-set (gs/get-saturated-locations {:raster new-raster} demand-quartiles)
